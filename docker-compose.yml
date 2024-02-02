@@ -1,0 +1,106 @@
+services:
+  database:
+    image: postgres:16.1
+    container_name: movies_database
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./previous_sprints/postgres/db.sql:/docker-entrypoint-initdb.d/db.sql
+      - db_data:/var/lib/postgresql/movies
+    env_file:
+      - ./.env
+    healthcheck:
+      test: pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis_controller:
+    image: redis:7-alpine
+    container_name: db_redis_controller
+    restart: always
+    healthcheck:
+      test: [ "CMD", "redis-cli","ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - ./.env
+    volumes:
+      - redis_data:/data
+
+  elasticsearch_db:
+    image: elasticsearch:8.5.0
+    container_name: movies_elasticsearch
+    healthcheck:
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:9200/
+      interval: 30s
+      timeout: 10s
+      retries: 50
+    env_file:
+      - ./.env
+    environment:
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+    volumes:
+      - elasticsearch_data:/elasticsearch/data
+
+  postgres_extract:
+    build: ./previous_sprints/postgres
+    container_name: movies_from_faker
+    image: faker_to_postgres
+    volumes:
+      - ./previous_sprints/postgres:/movies_data_import
+    depends_on:
+      database:
+           condition: service_healthy
+      redis_controller:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    
+  etl:
+    build: ./previous_sprints/etl
+    container_name: etl
+    image: etl
+    volumes:
+      - ./previous_sprints/etl:/etl
+    env_file:
+      - ./.env
+    depends_on:
+      database:
+        condition: service_healthy
+      elasticsearch_db:
+        condition: service_healthy
+      postgres_extract:
+        condition: service_completed_successfully
+
+  fastapi_service:
+    image: fastapi_service
+    container_name: fastapi_service
+    build: ./src
+    volumes:
+      - ./src:/async_api_1
+    env_file:
+      - ./.env
+    depends_on:
+      elasticsearch_db:
+        condition: service_healthy
+      redis_controller:
+        condition: service_healthy
+  
+  nginx:
+    image: nginx:1.23.2
+    container_name: nginx
+    volumes:
+      - ./previous_sprints/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./previous_sprints/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - fastapi_service
+    ports:
+      - "80:80"
+
+volumes:
+  db_data:
+  elasticsearch_data:
+  redis_data:

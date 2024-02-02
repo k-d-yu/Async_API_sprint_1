@@ -1,0 +1,10 @@
+FROM python:3.11.3
+
+WORKDIR /movies_data_import
+
+COPY ./requirements.txt ./requirements.txt
+
+RUN  pip install --upgrade pip \
+     && pip install -r requirements.txt --no-cache-dir
+
+ENTRYPOINT ["python", "-u", "generate_data.py" ]
